@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { kv } = require('@vercel/kv'); // Подключаем вечную базу данных Vercel KV / Upstash
+const { kv } = require('@vercel/kv'); // Подключаем базу данных Vercel KV / Upstash
 const app = express();
 
 app.use(cors({ origin: '*' }));
@@ -24,40 +24,46 @@ async function saveClansToDB(clans) {
     }
 }
 
+// 1. Получение списка всех кланов
 app.get('/api/clans', async (req, res) => {
     const clans = await getClansFromDB();
     res.json(clans);
 });
 
+// 2. Создание нового клана
 app.post('/api/clans/create', async (req, res) => {
     const { logo, name, reqLvl, balance, creatorName } = req.body;
     let clans = await getClansFromDB();
 
+    const normalName = name.trim();
+    const leaderName = creatorName || "Space_Pilot";
+
     // Проверяем, чтобы не было кланов с одинаковым именем
-    if (clans.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+    if (clans.some(c => c.name.toLowerCase() === normalName.toLowerCase())) {
         return res.status(400).json({ error: "A clan with that name already exists!" });
     }
 
     // Создаем структуру нового клана и четко записываем, кто его Лидер (creator)
     const newClan = {
         logo: logo || "🚀",
-        name: name,
+        name: normalName,
         req: Number(reqLvl) || 0,
-        creator: creatorName || "Space_Pilot", // Фиксируем имя Лидера, чтобы потом распустить клан при его выходе
+        creator: leaderName, // Фиксируем имя Лидера, чтобы потом распустить клан при его выходе
         members: 1,
         bank: Number(balance) || 0, // Баланс лидера сразу добавляется в общий банк клана
         membersList: [
-            { name: creatorName || "Space_Pilot", balance: Number(balance), dogLvl: Number(reqLvl) }
+            { name: leaderName, balance: Number(balance), dogLvl: Number(reqLvl) }
         ],
-        messages: [{ sender: "SYSTEM", text: `🚀 Клан "${name}" успешно создан!`, time: "" }]
+        messages: [{ sender: "SYSTEM", text: `🚀 Клан "${normalName}" успешно создан!`, time: "" }]
     };
 
     clans.unshift(newClan); // Добавляем в начало списка
-    await saveClansToDB(clans); // Сохраняем в вечную базу Upstash
+    await saveClansToDB(clans); // Сохраняем в базу
     res.json({ success: true, clans: clans });
 });
 
-// Вступление игрока в клан
+
+// 3. Вступление игрока в клан
 app.post('/api/clans/join', async (req, res) => {
     const { clanName, playerName, playerBalance, playerDogLvl } = req.body;
     let clans = await getClansFromDB();
@@ -65,11 +71,11 @@ app.post('/api/clans/join', async (req, res) => {
     let clan = clans.find(c => c.name === clanName);
     if (!clan) return res.status(404).json({ error: "Clan not found" });
 
-    // Проверяем дубликат игрока в списке
+    // Проверяем, есть ли уже этот пилот в списке участников
     const existingIndex = clan.membersList.findIndex(m => m.name === playerName);
     
     if (existingIndex !== -1) {
-        // Если игрок уже есть, обновляем баланс банка на разницу и обновляем его параметры
+        // Если игрок уже числится, пересчитываем разницу в банке и обновляем его параметры
         const oldBalance = Number(clan.membersList[existingIndex].balance) || 0;
         clan.bank = Math.max(0, (Number(clan.bank) || 0) - oldBalance + Number(playerBalance));
         
@@ -82,7 +88,7 @@ app.post('/api/clans/join', async (req, res) => {
 
     if (clan.members >= 50) return res.status(400).json({ error: "The clan is full" });
 
-    // Плюсуем баланс нового игрока к общему банку клана
+    // Если игрока нет в клане — добавляем как нового пилота и плюсуем банк
     clan.bank = (Number(clan.bank) || 0) + Number(playerBalance);
     clan.members++;
     
@@ -98,7 +104,7 @@ app.post('/api/clans/join', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
-// Выход игрока / роспуск клана Лидером
+// 4. Выход игрока / удаление клана Лидером
 app.post('/api/clans/leave', async (req, res) => {
     const { clanName, playerName, playerBalance } = req.body;
     let clans = await getClansFromDB();
@@ -107,22 +113,23 @@ app.post('/api/clans/leave', async (req, res) => {
     if (clanIndex !== -1) {
         let clan = clans[clanIndex];
 
-        // ЕСЛИ ИЗ КЛАНА ВЫХОДИТ ЕГО СОЗДАТЕЛЬ — удаляем клан полностью
+        // ЕСЛИ ИЗ КЛАНА ВЫХОДИТ ЕГО СЕО/ЛИДЕР (СОЗДАТЕЛЬ) — клан полностью распускается и удаляется
         if (clan.creator === playerName) {
             clans.splice(clanIndex, 1);
         } else {
             // ЕСЛИ ВЫХОДИТ ОБЫЧНЫЙ ИГРОК
-            // Вычитаем его баланс из общего банка клана
+            // 1. Его баланс строго вычитается из общего банка клана
             clan.bank = Math.max(0, (Number(clan.bank) || 0) - (Number(playerBalance) || 0));
             clan.members--;
             
-            // Полностью удаляем пилота из листа участников
+            // 2. Игрок полностью удаляется из массива, чтобы исчезнуть из вкладки MEMBERS
             clan.membersList = clan.membersList.filter(m => m.name !== playerName);
+            
             clan.messages.push({ sender: "SYSTEM", text: `🚪 Пилот ${playerName} покинул расположение клана.`, time: "" });
         }
     }
 
-    await saveClansToDB(clans);
+    await saveClansToDB(clans); // Записываем обновленные данные в базу KV
     res.json({ success: true, clans: clans });
 });
 
@@ -147,7 +154,5 @@ app.post('/api/clans/message', async (req, res) => {
     }
 });
 
-
 // Экспортируем приложение для корректной работы Serverless функций Vercel
 module.exports = app;
-
