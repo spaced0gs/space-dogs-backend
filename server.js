@@ -126,6 +126,28 @@ app.post('/api/clans/leave', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
+// 5. Отправка сообщений в клановый чат
+app.post('/api/clans/message', async (req, res) => {
+    const { clanName, sender, text, time } = req.body;
+    let clans = await getClansFromDB();
+
+    let clan = clans.find(c => c.name === clanName);
+    if (clan) {
+        if (!clan.messages) clan.messages = [];
+        clan.messages.push({ sender, text, time });
+        
+        // Лимит истории чата — храним только последние 40 сообщений
+        if (clan.messages.length > 40) {
+            clan.messages.shift();
+        }
+        await saveClansToDB(clans);
+        res.json({ success: true, clans: clans });
+    } else {
+        res.status(404).json({ error: "Clan not found" });
+    }
+});
+
+
 // Экспортируем приложение для корректной работы Serverless функций Vercel
 module.exports = app;
 
