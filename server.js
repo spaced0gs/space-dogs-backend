@@ -57,6 +57,7 @@ app.post('/api/clans/create', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
+// Вступление игрока в клан
 app.post('/api/clans/join', async (req, res) => {
     const { clanName, playerName, playerBalance, playerDogLvl } = req.body;
     let clans = await getClansFromDB();
@@ -64,20 +65,24 @@ app.post('/api/clans/join', async (req, res) => {
     let clan = clans.find(c => c.name === clanName);
     if (!clan) return res.status(404).json({ error: "Clan not found" });
 
-    // 🔥 ЗАЩИТА: Проверяем, есть ли уже этот пилот в клане
-    const existingMember = clan.membersList.find(m => m.name === playerName);
+    // Проверяем дубликат игрока в списке
+    const existingIndex = clan.membersList.findIndex(m => m.name === playerName);
     
-    if (existingMember) {
-        // Если он уже в списке, мы НЕ выдаем ошибку, а просто обновляем данные и впускаем его!
-        existingMember.balance = Number(playerBalance);
-        existingMember.dogLvl = Number(playerDogLvl);
+    if (existingIndex !== -1) {
+        // Если игрок уже есть, обновляем баланс банка на разницу и обновляем его параметры
+        const oldBalance = Number(clan.membersList[existingIndex].balance) || 0;
+        clan.bank = Math.max(0, (Number(clan.bank) || 0) - oldBalance + Number(playerBalance));
+        
+        clan.membersList[existingIndex].balance = Number(playerBalance);
+        clan.membersList[existingIndex].dogLvl = Number(playerDogLvl);
+        
         await saveClansToDB(clans);
         return res.json({ success: true, clans: clans });
     }
 
     if (clan.members >= 50) return res.status(400).json({ error: "The clan is full" });
 
-    // Если игрока нет в клане — добавляем как нового пилота и плюсуем банк
+    // Плюсуем баланс нового игрока к общему банку клана
     clan.bank = (Number(clan.bank) || 0) + Number(playerBalance);
     clan.members++;
     
@@ -93,6 +98,7 @@ app.post('/api/clans/join', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
+// Выход игрока / роспуск клана Лидером
 app.post('/api/clans/leave', async (req, res) => {
     const { clanName, playerName, playerBalance } = req.body;
     let clans = await getClansFromDB();
@@ -101,23 +107,22 @@ app.post('/api/clans/leave', async (req, res) => {
     if (clanIndex !== -1) {
         let clan = clans[clanIndex];
 
-        // 🔥 ЕСЛИ ИЗ КЛАНА ВЫХОДИТ ЕГО ЛИДЕР (СОЗДАТЕЛЬ)
+        // ЕСЛИ ИЗ КЛАНА ВЫХОДИТ ЕГО СОЗДАТЕЛЬ — удаляем клан полностью
         if (clan.creator === playerName) {
-            clans.splice(clanIndex, 1); // Клан полностью удаляется с сервера и распускается
+            clans.splice(clanIndex, 1);
         } else {
-            // 🔥 ЕСЛИ ВЫХОДИТ ОБЫЧНЫЙ ИГРОК
-            // 1. Его баланс строго вычитается из общего банка клана
-            clan.bank = Math.max(0, (Number(clan.bank) || 0) - Number(playerBalance));
+            // ЕСЛИ ВЫХОДИТ ОБЫЧНЫЙ ИГРОК
+            // Вычитаем его баланс из общего банка клана
+            clan.bank = Math.max(0, (Number(clan.bank) || 0) - (Number(playerBalance) || 0));
             clan.members--;
             
-            // 2. Игрок полностью удаляется из массива (он сразу исчезнет из вкладки MEMBERS)
+            // Полностью удаляем пилота из листа участников
             clan.membersList = clan.membersList.filter(m => m.name !== playerName);
-            
             clan.messages.push({ sender: "SYSTEM", text: `🚪 Пилот ${playerName} покинул расположение клана.`, time: "" });
         }
     }
 
-    await saveClansToDB(clans); // Записываем обновленные данные в базу
+    await saveClansToDB(clans);
     res.json({ success: true, clans: clans });
 });
 
