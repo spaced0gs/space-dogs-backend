@@ -30,7 +30,7 @@ app.get('/api/clans', async (req, res) => {
     res.json(clans);
 });
 
-// 2. Создание нового клана с международным фильтром мата в названии
+// 2. Создание нового клана с международным фильтром мата и свастик
 app.post('/api/clans/create', async (req, res) => {
     const { logo, name, reqLvl, balance, creatorName } = req.body;
     let clans = await getClansFromDB();
@@ -38,28 +38,33 @@ app.post('/api/clans/create', async (req, res) => {
     const normalName = name.trim();
     const leaderName = creatorName || "Space_Pilot";
 
-    // Базовый список запрещенных терминов и символов
-    const forbiddenSymbols = ["[censored_term_1]", "[censored_term_2]", "[censored_symbol_1]"];
-
-    // Список международных матов (Английский, Испанский, Хинди, Немецкий и др.)
-    const foreignBadWords = [
-        "[profanity_en_1]", "[profanity_en_2]", "[profanity_hi_1]", "[profanity_es_1]", "[profanity_de_1]"
+    // Сверхжесткий список запрещенных слов, нацизма и расизма
+    const forbiddenSymbols = [
+        "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист", "nigger", "nigga", "chink", "retard",
+        "卐", "卍", "ss", "сс", "нацизм", "гитлер", "hitler", "swastika", "свастика", "卐", "卍", "🖾", "✠", "✙"
     ];
 
-    // Регулярное выражение для фильтрации нецензурной лексики
-    const customRussianRegex = /([а-яё]*[корень_мата_1][а-яё]*|[а-яё]*[корень_мата_2][а-яё]*)/gi;
+    // База международных матов (Английский, Хинди, Испанский, Немецкий)
+    const foreignBadWords = [
+        "fuck", "fucking", "fucker", "bitch", "shit", "asshole", "cunt", "dick", "pussy", "whore", "slut", "faggot", "bastard",
+        "bhenchod", "benchod", "madarchod", "gand", "gandu", "chutiya", "mierda", "puta", "puto", "maricon", "cabron", "joder",
+        "scheisse", "fotze", "schlampe"
+    ];
+
+    // Мощное регулярное выражение для проверки РУССКИХ матерных корней
+    const customRussianRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
 
     const lowerText = normalName.toLowerCase();
 
-    // Проверка на наличие мата
+    // 1. Проверка на русский мат
     let hasBad = customRussianRegex.test(lowerText);
     
-    // Проверка запрещенных символов
+    // 2. Проверка на нацистские символы и оскорбления
     if (!hasBad) {
         hasBad = forbiddenSymbols.some(word => lowerText.includes(word));
     }
     
-    // Проверка иностранных матов строго по границам слов
+    // 3. Проверка на иностранный мат
     if (!hasBad) {
         hasBad = foreignBadWords.some(word => {
             const regex = new RegExp(`\\b${word}\\b`, 'gi');
@@ -67,8 +72,9 @@ app.post('/api/clans/create', async (req, res) => {
         });
     }
 
+    // Если нашли хоть одно совпадение — жестко блокируем создание клана
     if (hasBad) {
-        return res.status(400).json({ error: "Inappropriate language in the clan name is not allowed!" });
+        return res.status(400).json({ error: "Inappropriate language or symbols in the clan name are not allowed!" });
     }
 
     if (clans.some(c => c.name.toLowerCase() === normalName.toLowerCase())) {
@@ -92,7 +98,6 @@ app.post('/api/clans/create', async (req, res) => {
     await saveClansToDB(clans);
     res.json({ success: true, clans: clans });
 });
-
 
 
 
