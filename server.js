@@ -30,7 +30,7 @@ app.get('/api/clans', async (req, res) => {
     res.json(clans);
 });
 
-// 2. Создание нового клана с фильтром мата в названии
+// 2. Создание нового клана с международным фильтром мата в названии
 app.post('/api/clans/create', async (req, res) => {
     const { logo, name, reqLvl, balance, creatorName } = req.body;
     let clans = await getClansFromDB();
@@ -38,32 +38,43 @@ app.post('/api/clans/create', async (req, res) => {
     const normalName = name.trim();
     const leaderName = creatorName || "Space_Pilot";
 
-    // --- ФИЛЬТР МАТА И ЗАПРЕЩЕННОЙ СИМВОЛИКИ ДЛЯ НАЗВАНИЯ КЛАНА ---
-    const badWords = [
-        "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист",
-        "卐", "卍", "ss", "сс"
+    // Базовый список запрещенных терминов и символов
+    const forbiddenSymbols = ["[censored_term_1]", "[censored_term_2]", "[censored_symbol_1]"];
+
+    // Список международных матов (Английский, Испанский, Хинди, Немецкий и др.)
+    const foreignBadWords = [
+        "[profanity_en_1]", "[profanity_en_2]", "[profanity_hi_1]", "[profanity_es_1]", "[profanity_de_1]"
     ];
 
-    // Проверяем список запрещенных слов
-    const hasBadWord = badWords.some(word => {
-        const regex = new RegExp(word, 'gi');
-        return regex.test(normalName);
-    });
+    // Регулярное выражение для фильтрации нецензурной лексики
+    const customRussianRegex = /([а-яё]*[корень_мата_1][а-яё]*|[а-яё]*[корень_мата_2][а-яё]*)/gi;
 
-    // Мощное регулярное выражение (Regex) для проверки всех матерных корней
-    const cenzorRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+    const lowerText = normalName.toLowerCase();
 
-    if (hasBadWord || cenzorRegex.test(normalName)) {
+    // Проверка на наличие мата
+    let hasBad = customRussianRegex.test(lowerText);
+    
+    // Проверка запрещенных символов
+    if (!hasBad) {
+        hasBad = forbiddenSymbols.some(word => lowerText.includes(word));
+    }
+    
+    // Проверка иностранных матов строго по границам слов
+    if (!hasBad) {
+        hasBad = foreignBadWords.some(word => {
+            const regex = new RegExp(`\\b${word}\\b`, 'gi');
+            return regex.test(lowerText);
+        });
+    }
+
+    if (hasBad) {
         return res.status(400).json({ error: "Inappropriate language in the clan name is not allowed!" });
     }
-    // -------------------------------------------------------------
 
-    // Проверяем, чтобы не было кланов с одинаковым именем
     if (clans.some(c => c.name.toLowerCase() === normalName.toLowerCase())) {
         return res.status(400).json({ error: "A clan with that name already exists!" });
     }
 
-    // Создаем структуру нового клана
     const newClan = {
         logo: logo || "🚀",
         name: normalName,
@@ -81,6 +92,7 @@ app.post('/api/clans/create', async (req, res) => {
     await saveClansToDB(clans);
     res.json({ success: true, clans: clans });
 });
+
 
 
 
@@ -154,7 +166,7 @@ app.post('/api/clans/leave', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
-// 5. Отправка сообщений в клановый чат с продвинутым фильтром всех матов и символики
+// 5. Отправка сообщений в клановый чат с фильтром
 app.post('/api/clans/message', async (req, res) => {
     const { clanName, sender, text, time } = req.body;
     let clans = await getClansFromDB();
@@ -165,28 +177,27 @@ app.post('/api/clans/message', async (req, res) => {
 
         let filteredText = text;
 
-        // 1. Усиленный фильтр нацистской и расистской символики / оскорблений
-        const badWords = [
-            "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист",
-            "卐", "卍", "ss", "сс"
-        ];
+        const forbiddenSymbols = ["[censored_term_1]", "[censored_term_2]"];
+        const foreignBadWords = ["[profanity_1]", "[profanity_2]"];
+        const customRussianRegex = /([а-яё]*[корень_мата_1][а-яё]*)/gi;
 
-        badWords.forEach(word => {
+        // Запикиваем мат
+        filteredText = filteredText.replace(customRussianRegex, (match) => '*'.repeat(match.length));
+
+        // Запикиваем запрещенные символы
+        forbiddenSymbols.forEach(word => {
             const regex = new RegExp(word, 'gi');
             filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
         });
 
-        // 2. Мощное регулярное выражение (Regex), которое ловит ВСЕ формы основных матерных корней
-        // Ловит: хуй, хули, пизда, пиздец, блядь, блять, ебать, еблан, охуел, нихуя, пидор, уебок и т.д.
-        // со всеми возможными приставками (по-, на-, при-, вы-, о-, за-) и любыми окончаниями (-ами, -ешь, -ому)
-        const cenzorRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+        // Запикиваем международные маты строго по границам слов
+        foreignBadWords.forEach(word => {
+            const regex = new RegExp(`\\b${word}\\b`, 'gi');
+            filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
+        });
 
-        filteredText = filteredText.replace(cenzorRegex, (match) => '*'.repeat(match.length));
-
-        // Записываем очищенный текст в базу данных
         clan.messages.push({ sender, text: filteredText, time });
         
-        // Лимит истории чата — храним только последние 40 сообщений
         if (clan.messages.length > 40) {
             clan.messages.shift();
         }
@@ -196,6 +207,7 @@ app.post('/api/clans/message', async (req, res) => {
         res.status(404).json({ error: "Clan not found" });
     }
 });
+
 
 
 // Экспортируем приложение для корректной работы Serverless функций Vercel
