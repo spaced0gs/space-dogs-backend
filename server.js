@@ -30,7 +30,7 @@ app.get('/api/clans', async (req, res) => {
     res.json(clans);
 });
 
-// 2. Создание нового клана
+// 2. Создание нового клана с фильтром мата в названии
 app.post('/api/clans/create', async (req, res) => {
     const { logo, name, reqLvl, balance, creatorName } = req.body;
     let clans = await getClansFromDB();
@@ -38,29 +38,50 @@ app.post('/api/clans/create', async (req, res) => {
     const normalName = name.trim();
     const leaderName = creatorName || "Space_Pilot";
 
+    // --- ФИЛЬТР МАТА И ЗАПРЕЩЕННОЙ СИМВОЛИКИ ДЛЯ НАЗВАНИЯ КЛАНА ---
+    const badWords = [
+        "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист",
+        "卐", "卍", "ss", "сс"
+    ];
+
+    // Проверяем список запрещенных слов
+    const hasBadWord = badWords.some(word => {
+        const regex = new RegExp(word, 'gi');
+        return regex.test(normalName);
+    });
+
+    // Мощное регулярное выражение (Regex) для проверки всех матерных корней
+    const cenzorRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+
+    if (hasBadWord || cenzorRegex.test(normalName)) {
+        return res.status(400).json({ error: "Inappropriate language in the clan name is not allowed!" });
+    }
+    // -------------------------------------------------------------
+
     // Проверяем, чтобы не было кланов с одинаковым именем
     if (clans.some(c => c.name.toLowerCase() === normalName.toLowerCase())) {
         return res.status(400).json({ error: "A clan with that name already exists!" });
     }
 
-    // Создаем структуру нового клана и четко записываем, кто его Лидер (creator)
+    // Создаем структуру нового клана
     const newClan = {
         logo: logo || "🚀",
         name: normalName,
         req: Number(reqLvl) || 0,
-        creator: leaderName, // Фиксируем имя Лидера, чтобы потом распустить клан при его выходе
+        creator: leaderName,
         members: 1,
-        bank: Number(balance) || 0, // Баланс лидера сразу добавляется в общий банк клана
+        bank: Number(balance) || 0,
         membersList: [
             { name: leaderName, balance: Number(balance), dogLvl: Number(reqLvl) }
         ],
         messages: [{ sender: "SYSTEM", text: `🚀 Клан "${normalName}" успешно создан!`, time: "" }]
     };
 
-    clans.unshift(newClan); // Добавляем в начало списка
-    await saveClansToDB(clans); // Сохраняем в базу
+    clans.unshift(newClan);
+    await saveClansToDB(clans);
     res.json({ success: true, clans: clans });
 });
+
 
 
 // 3. Вступление игрока в клан
