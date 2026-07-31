@@ -2,7 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const { kv } = require('@vercel/kv'); // Подключаем базу данных Vercel KV / Upstash
 const app = express();
-const chatCooldowns = {}; // Объект для защиты от флуда
+const chatCooldowns = {}; // Время последнего сообщения игрока
+const playerSpamCounts = {}; // Счетчик быстрых кликов игрока подряд
+const playerMuteTimers = {}; // Время, до которого у игрока действует мут
+
 
 
 app.use(cors({ origin: '*' }));
@@ -173,7 +176,7 @@ app.post('/api/clans/leave', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
-// 5. Отправка сообщений в чат с защитой от флуда и жестким фильтром свастик/матов
+// 5. Отправка сообщений в чат с прогрессивной защитой от флуда и мутом на 5 минут
 app.post('/api/clans/message', async (req, res) => {
     const { clanName, sender, text, time } = req.body;
     let clans = await getClansFromDB();
@@ -181,13 +184,38 @@ app.post('/api/clans/message', async (req, res) => {
     let clan = clans.find(c => c.name === clanName);
     if (!clan) return res.status(404).json({ error: "Clan not found" });
 
-    // --- 1. ЗАЩИТА ОТ ФЛУДА (FLOOD CONTROL) ---
     const now = Date.now();
     const playerKey = `${clanName}_${sender}`;
 
+    // --- 1. ПРОВЕРКА ДЕЙСТВУЮЩЕГО МУТА ---
+    if (playerMuteTimers[playerKey] && now < playerMuteTimers[playerKey]) {
+        const remainingMs = playerMuteTimers[playerKey] - now;
+        const remainingMin = Math.ceil(remainingMs / 60000); // Округляем до минут в большую сторону
+        return res.status(423).json({ error: `You are muted for spamming! Try again in ${remainingMin} min.` });
+    }
+    // --------------------------------------
+
+    // --- 2. КОНТРОЛЬ СКОРОСТИ И СЧЕТЧИК СПАМА ---
+    if (!playerSpamCounts[playerKey]) playerSpamCounts[playerKey] = 0;
+
     if (chatCooldowns[playerKey] && (now - chatCooldowns[playerKey] < 2000)) {
+        // Игрок кликнул быстрее чем через 2 секунды — плюсуем нарушение
+        playerSpamCounts[playerKey]++;
+        chatCooldowns[playerKey] = now; // Сбрасываем таймер на текущий момент
+
+        // Если это 3-е быстрое сообщение подряд — вешаем мут на 5 минут
+        if (playerSpamCounts[playerKey] >= 3) {
+            playerMuteTimers[playerKey] = now + (5 * 60 * 1000); // Текущее время + 5 минут
+            playerSpamCounts[playerKey] = 0; // Сбрасываем счетчик кликов
+            return res.status(423).json({ error: "You have been muted for 5 minutes for aggressive spamming!" });
+        }
+
+        // Если кликов меньше трех — выдаем обычное предупреждение
         return res.status(429).json({ error: "Slow down! Don't spam the chat." });
     }
+
+    // Если игрок отправил сообщение вовремя (с паузой > 2 сек) — обнуляем его счетчик нарушений
+    playerSpamCounts[playerKey] = 0;
     chatCooldowns[playerKey] = now;
     // ------------------------------------------
 
@@ -195,7 +223,7 @@ app.post('/api/clans/message', async (req, res) => {
 
     let filteredText = text;
 
-    // Жесткий список нацистских символов и оскорблений
+    // Сверхжесткий список нацистских символов и оскорблений
     const forbiddenSymbols = [
         "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист", "nigger", "nigga", "chink", "retard",
         "卐", "卍", "🖾", "✠", "✙", "ss", "сс", "нацизм", "гитлер", "hitler", "swastika", "свастика"
@@ -210,16 +238,13 @@ app.post('/api/clans/message', async (req, res) => {
     // Регулярное выражение для русского мата
     const customRussianRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
 
-    // 1. Запикиваем русский мат
     filteredText = filteredText.replace(customRussianRegex, (match) => '*'.repeat(match.length));
 
-    // 2. Запикиваем нацистские символы и свастики
     forbiddenSymbols.forEach(word => {
         const regex = new RegExp(word, 'gi');
         filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
     });
 
-    // 3. Запикиваем международный мат
     foreignBadWords.forEach(word => {
         const regex = new RegExp(`\\b${word}\\b`, 'gi');
         filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
