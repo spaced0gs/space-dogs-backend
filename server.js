@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const { kv } = require('@vercel/kv'); // Подключаем базу данных Vercel KV / Upstash
 const app = express();
+const chatCooldowns = {}; // Объект для защиты от флуда
+
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
@@ -171,47 +173,68 @@ app.post('/api/clans/leave', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
-// 5. Отправка сообщений в клановый чат с фильтром
+// 5. Отправка сообщений в чат с защитой от флуда и жестким фильтром свастик/матов
 app.post('/api/clans/message', async (req, res) => {
     const { clanName, sender, text, time } = req.body;
     let clans = await getClansFromDB();
 
     let clan = clans.find(c => c.name === clanName);
-    if (clan) {
-        if (!clan.messages) clan.messages = [];
+    if (!clan) return res.status(404).json({ error: "Clan not found" });
 
-        let filteredText = text;
+    // --- 1. ЗАЩИТА ОТ ФЛУДА (FLOOD CONTROL) ---
+    const now = Date.now();
+    const playerKey = `${clanName}_${sender}`;
 
-        const forbiddenSymbols = ["[censored_term_1]", "[censored_term_2]"];
-        const foreignBadWords = ["[profanity_1]", "[profanity_2]"];
-        const customRussianRegex = /([а-яё]*[корень_мата_1][а-яё]*)/gi;
-
-        // Запикиваем мат
-        filteredText = filteredText.replace(customRussianRegex, (match) => '*'.repeat(match.length));
-
-        // Запикиваем запрещенные символы
-        forbiddenSymbols.forEach(word => {
-            const regex = new RegExp(word, 'gi');
-            filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
-        });
-
-        // Запикиваем международные маты строго по границам слов
-        foreignBadWords.forEach(word => {
-            const regex = new RegExp(`\\b${word}\\b`, 'gi');
-            filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
-        });
-
-        clan.messages.push({ sender, text: filteredText, time });
-        
-        if (clan.messages.length > 40) {
-            clan.messages.shift();
-        }
-        await saveClansToDB(clans);
-        res.json({ success: true, clans: clans });
-    } else {
-        res.status(404).json({ error: "Clan not found" });
+    if (chatCooldowns[playerKey] && (now - chatCooldowns[playerKey] < 2000)) {
+        return res.status(429).json({ error: "Slow down! Don't spam the chat." });
     }
+    chatCooldowns[playerKey] = now;
+    // ------------------------------------------
+
+    if (!clan.messages) clan.messages = [];
+
+    let filteredText = text;
+
+    // Жесткий список нацистских символов и оскорблений
+    const forbiddenSymbols = [
+        "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист", "nigger", "nigga", "chink", "retard",
+        "卐", "卍", "🖾", "✠", "✙", "ss", "сс", "нацизм", "гитлер", "hitler", "swastika", "свастика"
+    ];
+
+    // Список международных матов
+    const foreignBadWords = [
+        "fuck", "fucking", "fucker", "bitch", "shit", "asshole", "cunt", "dick", "pussy", "whore", "slut", "faggot", "bastard",
+        "bhenchod", "benchod", "madarchod", "gand", "gandu", "chutiya", "mierda", "puta", "puto", "maricon", "cabron", "joder"
+    ];
+
+    // Регулярное выражение для русского мата
+    const customRussianRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+
+    // 1. Запикиваем русский мат
+    filteredText = filteredText.replace(customRussianRegex, (match) => '*'.repeat(match.length));
+
+    // 2. Запикиваем нацистские символы и свастики
+    forbiddenSymbols.forEach(word => {
+        const regex = new RegExp(word, 'gi');
+        filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
+    });
+
+    // 3. Запикиваем международный мат
+    foreignBadWords.forEach(word => {
+        const regex = new RegExp(`\\b${word}\\b`, 'gi');
+        filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
+    });
+
+    clan.messages.push({ sender, text: filteredText, time });
+    
+    if (clan.messages.length > 40) {
+        clan.messages.shift();
+    }
+    
+    await saveClansToDB(clans);
+    res.json({ success: true, clans: clans });
 });
+
 
 
 
