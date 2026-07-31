@@ -133,7 +133,7 @@ app.post('/api/clans/leave', async (req, res) => {
     res.json({ success: true, clans: clans });
 });
 
-// 5. Отправка сообщений в клановый чат
+// 5. Отправка сообщений в клановый чат с продвинутым фильтром всех матов и символики
 app.post('/api/clans/message', async (req, res) => {
     const { clanName, sender, text, time } = req.body;
     let clans = await getClansFromDB();
@@ -141,7 +141,29 @@ app.post('/api/clans/message', async (req, res) => {
     let clan = clans.find(c => c.name === clanName);
     if (clan) {
         if (!clan.messages) clan.messages = [];
-        clan.messages.push({ sender, text, time });
+
+        let filteredText = text;
+
+        // 1. Усиленный фильтр нацистской и расистской символики / оскорблений
+        const badWords = [
+            "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист",
+            "卐", "卍", "ss", "сс"
+        ];
+
+        badWords.forEach(word => {
+            const regex = new RegExp(word, 'gi');
+            filteredText = filteredText.replace(regex, (match) => '*'.repeat(match.length));
+        });
+
+        // 2. Мощное регулярное выражение (Regex), которое ловит ВСЕ формы основных матерных корней
+        // Ловит: хуй, хули, пизда, пиздец, блядь, блять, ебать, еблан, охуел, нихуя, пидор, уебок и т.д.
+        // со всеми возможными приставками (по-, на-, при-, вы-, о-, за-) и любыми окончаниями (-ами, -ешь, -ому)
+        const cenzorRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+
+        filteredText = filteredText.replace(cenzorRegex, (match) => '*'.repeat(match.length));
+
+        // Записываем очищенный текст в базу данных
+        clan.messages.push({ sender, text: filteredText, time });
         
         // Лимит истории чата — храним только последние 40 сообщений
         if (clan.messages.length > 40) {
@@ -153,6 +175,7 @@ app.post('/api/clans/message', async (req, res) => {
         res.status(404).json({ error: "Clan not found" });
     }
 });
+
 
 // Экспортируем приложение для корректной работы Serverless функций Vercel
 module.exports = app;
