@@ -503,35 +503,69 @@ app.post('/api/tasks/claim-friends-reward', async (req, res) => {
 // ====== ИНТЕГРАЦИЯ ТЕЛЕГРАМ-БОТА С АВТО-ВЕБХУКОМ ======
 const { Telegraf, Markup } = require('telegraf');
 
-const BOT_TOKEN = '8922456816:AAF5aQWspqjYyvxXJd8k94KCUzds_x-4qE4'; 
-const bot = new Telegraf(BOT_TOKEN);
+// ==================================================================
+//  ЖЕЛЕЗОБЕТОННЫЙ ТЕЛЕГРАМ-БОТ ДЛЯ VERCEL SERVERLESS (БЕЗ РЕКЛАМЫ)
+// ==================================================================
+const BOT_TOKEN = '8922456816:AAF5aQWspqjYyvxXJd8k94KCUzds_x-4qE4';
+const GAME_URL = 'https://space-dogs-two.vercel.app/';
+const CHANNEL_URL = 'https://t.me/spacedogoff';
 
-const GAME_URL = 'https://space-dogs-two.vercel.app/'; 
-const CHANNEL_URL = 'https://t.me/spacedogoff'; 
+// Прямой эндпоинт, куда Telegram будет присылать команду /start
+app.post('/api/telegram-bot', async (req, res) => {
+    try {
+        // Извлекаем входящее сообщение от пользователя
+        const update = req.body;
+        
+        if (update && update.message && update.message.text === '/start') {
+            const chatId = update.message.chat.id;
+            
+            const welcomeText = 
+                `Welcome to Space Dogs! 🚀🐾\n\n` +
+                `Launch rockets, upgrade your dogs, open cases, and build the ultimate Space Clan.\n\n` +
+                `Tap below to start your journey! 👇`;
 
-bot.start((ctx) => {
-    const welcomeText = 
-        `Welcome to Space Dogs! 🚀🐾\n\n` +
-        `Launch rockets, upgrade your dogs, open cases, and build the ultimate Space Clan.\n\n` +
-        `Tap "start flight" to start your journey! 👇`;
+            // Формируем нативные Inline-кнопки
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: '🚀Space Dogs🚀', web_app: { url: GAME_URL } }],
+                    [{ text: 'Subscribe to official channel', url: CHANNEL_URL }]
+                ]
+            };
 
-    ctx.reply(welcomeText, 
-        Markup.inlineKeyboard([
-            [Markup.button.webApp('🚀Space Dogs🚀', GAME_URL)],
-            [Markup.button.url('Subscribe to official channel', CHANNEL_URL)]
-        ])
-    );
+            // Отправляем прямой POST-запрос в Telegram API на отправку сообщения
+            await fetch(`https://telegram.org{BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: welcomeText,
+                    reply_markup: keyboard,
+                    parse_mode: 'Markdown'
+                })
+            });
+        }
+
+        // Обязательно отвечаем серверу Telegram статус-кодом 200, чтобы он не слал повторы
+        res.status(200).send('OK');
+    } catch (err) {
+        console.error("Ошибка обработки бота:", err.message);
+        res.status(500).send(err.message);
+    }
 });
 
-// Настройка вебхука для Vercel Serverless
-app.use(bot.webhookCallback('/api/telegram-bot'));
-
-// СЕКРЕТНЫЙ АВТО-ПИНОК: Сервер Vercel сам свяжется с Telegram без твоего браузера
-const BACKEND_URL = 'https://vercel.app';
-fetch(`https://telegram.org{BOT_TOKEN}/setWebhook?url=${BACKEND_URL}/api/telegram-bot`)
-    .then(() => console.log("Вебхук бота успешно настроен сервером!"))
-    .catch((err) => console.error("Ошибка авто-вебхука:", err.message));
-// ======================================================
+// Вспомогательный эндпоинт для жесткой активации вебхука
+app.get('/api/activate-my-bot', async (req, res) => {
+    try {
+        const BACKEND_URL = 'https://vercel.app';
+        const tgRes = await fetch(`https://telegram.org{BOT_TOKEN}/setWebhook?url=${BACKEND_URL}/api/telegram-bot`);
+        const tgData = await tgRes.json();
+        res.json({ message: "Запрос отправлен!", responseFromTelegram: tgData });
+    } catch (err) {
+        res.json({ error: "Ошибка соединения", details: err.message });
+    }
+});
 
 // Экспортируем приложение для корректной работы Serverless функций Vercel
 module.exports = app;
+// ==================================================================
+
