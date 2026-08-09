@@ -11,6 +11,8 @@ const playerMuteTimers = {}; // Время, до которого у игрок�
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 
 async function getClansFromDB() {
     try {
