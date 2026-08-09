@@ -498,10 +498,9 @@ app.post('/api/tasks/claim-friends-reward', async (req, res) => {
     // аналогично тому, как мы делали это на клиенте.
     res.json({ success: true });
 });
-// ====== ИНТЕГРАЦИЯ ТЕЛЕГРАМ-БОТА (ЧИСТЫЙ ВАРИАНТ БЕЗ РЕКЛАМЫ) ======
+// ====== ИНТЕГРАЦИЯ ТЕЛЕГРАМ-БОТА С АВТО-ВЕБХУКОМ ======
 const { Telegraf, Markup } = require('telegraf');
 
-// Сюда между кавычками вставь тот самый НОВЫЙ токен из BotFather
 const BOT_TOKEN = '8922456816:AAF5aQWspqjYyvxXJd8k94KCUzds_x-4qE4'; 
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -512,22 +511,25 @@ bot.start((ctx) => {
     const welcomeText = 
         `Welcome to Space Dogs! 🚀🐾\n\n` +
         `Launch rockets, upgrade your dogs, open cases, and build the ultimate Space Clan.\n\n` +
-        `Tap below to start your journey! 👇`;
+        `Tap "start flight" to start your journey! 👇`;
 
     ctx.reply(welcomeText, 
         Markup.inlineKeyboard([
-            [
-                Markup.button.webApp('🚀Space Dogs🚀', GAME_URL)
-            ],
-            [
-                Markup.button.url('Subscribe to official channel', CHANNEL_URL)
-            ]
+            [Markup.button.webApp('🚀Space Dogs🚀', GAME_URL)],
+            [Markup.button.url('Subscribe to official channel', CHANNEL_URL)]
         ])
     );
 });
 
+// Настройка вебхука для Vercel Serverless
 app.use(bot.webhookCallback('/api/telegram-bot'));
 
+// СЕКРЕТНЫЙ АВТО-ПИНОК: Сервер Vercel сам свяжется с Telegram без твоего браузера
+const BACKEND_URL = 'https://vercel.app';
+fetch(`https://telegram.org{BOT_TOKEN}/setWebhook?url=${BACKEND_URL}/api/telegram-bot`)
+    .then(() => console.log("Вебхук бота успешно настроен сервером!"))
+    .catch((err) => console.error("Ошибка авто-вебхука:", err.message));
+// ======================================================
 
 // Экспортируем приложение для корректной работы Serverless функций Vercel
 module.exports = app;
