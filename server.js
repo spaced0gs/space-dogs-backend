@@ -527,17 +527,20 @@ async function sendTelegramAdminLog(message) {
         console.error("Telegram admin bot logging error:", e.message);
     }
 }
+// ========================================================
+// 🎬 SHORTS MANUAL REVIEW SYSTEM (CLEAN CODE)
+// ========================================================
+const ADMIN_BOT_TOKEN = "СЮДА_ВСТАВЬ_НОВЫЙ_ТОКЕН_ИЗ_BOTFATHER";
+const ADMIN_CHAT_ID = "8922456816";
 
-// Quiet endpoint to check ban status when entering the Earn tab
 app.post('/api/tasks/check-shorts-ban', async (req, res) => {
     const { initData } = req.body;
     try {
         const params = new URLSearchParams(initData);
         const userParam = params.get('user');
-        if (!userParam) return res.status(400).json({ error: "Invalid webapp initialization data." });
+        if (!userParam) return res.status(400).json({ error: "Invalid data." });
         const userData = JSON.parse(userParam);
         const userId = String(userData.id);
-
         const isBanned = await kv.get(`shorts_banned_${userId}`);
         res.json({ isBanned: isBanned === "true" });
     } catch (e) {
@@ -545,190 +548,158 @@ app.post('/api/tasks/check-shorts-ban', async (req, res) => {
     }
 });
 
-// Main verification endpoint: Handling view milestones, tags, limits, and anti-fraud
-app.post('/api/tasks/verify-shorts', async (req, res) => {
-    const { videoUrl, initData, isInvalidLink } = req.body;
-    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; 
-    const REQUIRED_HASHTAG = "#spacedogsgame"; 
-
-    if (!initData) return res.status(400).json({ error: "Telegram Authentication data required." });
-    if (!videoUrl) return res.status(400).json({ error: "Video URL is required." });
-
+app.post('/api/tasks/submit-shorts-review', async (req, res) => {
+    const { videoUrl, initData } = req.body;
+    if (!initData || !videoUrl) return res.status(400).json({ error: "Required fields missing." });
     try {
         const params = new URLSearchParams(initData);
         const userParam = params.get('user');
-        if (!userParam) return res.status(400).json({ error: "Invalid Telegram user data." });
+        if (!userParam) return res.status(400).json({ error: "Invalid user data." });
         const userData = JSON.parse(userParam);
         const userId = String(userData.id);
         const userUsername = userData.username ? `@${userData.username}` : userData.first_name;
 
-        // 1. BAN CHECK: Is the user banned from this specific task?
-        const checkBan = await kv.get(`shorts_banned_${userId}`);
-        if (checkBan === "true") {
-            return res.status(403).json({ isBanned: true, error: "You are banned from the Shorts Bounty task!" });
+        const isBanned = await kv.get(`shorts_banned_${userId}`);
+        if (isBanned === "true") {
+            return res.status(403).json({ isBanned: true, error: "You are banned from the Shorts task!" });
         }
 
-        // Internal Strike & Ban Processor
-        async function issueStrikeAndCheckBan(customError) {
-            let currentStrikes = Number(await kv.get(`shorts_strikes_${userId}`)) || 0;
-            currentStrikes++;
-            await kv.set(`shorts_strikes_${userId}`, currentStrikes);
-
-            if (currentStrikes >= 3) {
-                await kv.set(`shorts_banned_${userId}`, "true"); 
-                await sendTelegramAdminLog(`💀 *SHORTS TASK BAN*\nUser: ${userUsername} (ID: ${userId})\nReason: Received 3/3 strikes for fraud or heavy spamming.`);
-                return { isBanned: true, error: "You are permanently banned from the Shorts Bounty task!" };
-            }
-            
-            await sendTelegramAdminLog(`⚠️ *STRIKE ISSUED*\nUser: ${userUsername} (ID: ${userId})\nStrikes: ${currentStrikes}/3\nReason: ${customError}`);
-            return { isBanned: false, error: `${customError} Strike ${currentStrikes}/3. 3 strikes = permanent BAN.` };
-        }
-
-        // Catching spam text or non-shorts submissions immediately
-        if (isInvalidLink === true || videoUrl === "INVALID_SPAM") {
-            const strikeResult = await issueStrikeAndCheckBan("Submitted text, spam, or link that is not YouTube Shorts.");
-            return res.status(403).json(strikeResult);
-        }
-
-        // 2. SUNDAY/DAILY LIMIT CHECK: Maximum 1 successful video per calendar day
         const lastClaimTimestamp = Number(await kv.get(`shorts_last_claim_${userId}`)) || 0;
         if (lastClaimTimestamp !== 0) {
             const lastClaimDate = new Date(lastClaimTimestamp).toDateString();
             const nowDate = new Date().toDateString();
-            
             if (lastClaimDate === nowDate) {
-                await sendTelegramAdminLog(`⏳ *LIMIT BYPASS ATTEMPT*\nUser: ${userUsername} (ID: ${userId})\nAction: Attempted to submit a second video within 24 hours.`);
-                return res.status(429).json({ 
-                    error: "You can only submit 1 Shorts video per day! Come back tomorrow." 
-                });
+                return res.status(429).json({ error: "You can only submit 1 video per day! Come back tomorrow." });
             }
         }
 
-        // Extracting unique 11-character Video ID from the link
-        const regExp = /^.*(?:shorts\/)([^#\&\?]*).*/;
-        const match = videoUrl.match(regExp);
-        const videoId = (match && match.length === 11) ? match[1] : null;
+        const adminMessage = `🎬 *NEW SHORTS APPLICATION*\n\n👤 *User:* ${userUsername} (ID: \`${userId}\`)\n🔗 *Link:* ${videoUrl}\n\nCheck video on YouTube. Choose action:`;
 
-        if (!videoId) {
-            const strikeResult = await issueStrikeAndCheckBan("Invalid YouTube link structure.");
-            return res.status(403).json(strikeResult);
-        }
-
-        if (!YOUTUBE_API_KEY) {
-            return res.status(500).json({ error: "YouTube API configuration is missing on the server backend." });
-        }
-
-        // Fetching official metadata and video statistics from Google
-        const ytRes = await fetch(`https://googleapis.com{videoId}&key=${YOUTUBE_API_KEY}`);
-        const ytData = await ytRes.json();
-
-        // If video does not exist or is set to private
-        if (!ytData.items || ytData.items.length === 0) {
-            const strikeResult = await issueStrikeAndCheckBan("Video not found on YouTube. Make sure it is public.");
-            return res.status(403).json(strikeResult);
-        }
-
-        const videoInfo = ytData.items[0];
-        const title = (videoInfo.snippet.title || "").toLowerCase();
-        const description = (videoInfo.snippet.description || "").toLowerCase();
-        const tags = videoInfo.snippet.tags || [];
-        
-        const viewCount = Number(videoInfo.statistics.viewCount) || 0;
-        const commentCount = Number(videoInfo.statistics.commentCount) || 0;
-        const likeCount = Number(videoInfo.statistics.likeCount) || 0;
-
-        // 3. HASHTAG VALIDATION: Reject and strike if the hashtag is missing
-        const hasTagInMeta = tags.some(t => t.toLowerCase() === REQUIRED_HASHTAG.replace('#', ''));
-        const hasTagInText = title.includes(REQUIRED_HASHTAG) || description.includes(REQUIRED_HASHTAG);
-
-        if (!hasTagInMeta && !hasTagInText) {
-            const strikeResult = await issueStrikeAndCheckBan(`Missing required ${REQUIRED_HASHTAG} hashtag in the video details.`);
-            return res.status(403).json(strikeResult);
-        }
-
-        // 4. VIEW COUNT VALIDATION: Must be at least 1,000,000 views
-        if (viewCount < 1000000) {
-            return res.status(400).json({ 
-                error: `Not enough views yet! Your video has ${viewCount.toLocaleString()} views. Minimum 1,000,000 required.` 
-            });
-        }
-
-        // 5. ANTI-FRAUD SECURITY SCANNER (Sensing fake views and bot farms)
-        const engagementRate = (likeCount / viewCount) * 100;
-        if (engagementRate < 1.2 || likeCount < 10000 || commentCount < 50) {
-            await sendTelegramAdminLog(`🚫 *BOT DETECTION ALERT*\nUser: ${userUsername} (ID: ${userId})\nVideo ID: ${videoId}\nViews: ${viewCount.toLocaleString()}\nLikes: ${likeCount}\nComments: ${commentCount}\n*Result:* Transaction automatically blocked by security filters.`);
-            return res.status(403).json({ 
-                isBanned: false, 
-                error: "Security system alert: Suspicious botting activity detected (fake views). Reward blocked." 
-            });
-        }
-
-        // 6. REWARD CALCULATION (1M coins per every full 1M views)
-        const millionsCount = Math.floor(viewCount / 1000000);
-        const totalReward = millionsCount * 1000000;
-
-        const dbVideoKey = `shorts_rewarded_${videoId}`;
-        const alreadyClaimed = Number(await kv.get(dbVideoKey)) || 0;
-
-        if (totalReward <= alreadyClaimed) {
-            return res.status(400).json({ 
-                error: "You have already claimed your reward for the current view count. Reach the next million to claim again!" 
-            });
-        }
-
-        const netRewardToGive = totalReward - alreadyClaimed;
-        
-        // Committing records to Vercel KV Database
-        await kv.set(dbVideoKey, totalReward);
-        await kv.set(`shorts_last_claim_${userId}`, Date.now()); 
-        await kv.set(`shorts_strikes_${userId}`, 0); // Clearing errors on successful verified claim
-
-        // Sending Green Success Alert to Admin Bot
-        await sendTelegramAdminLog(`🟢 *SUCCESSFUL REWARD CLAIM*\nUser: ${userUsername} (ID: ${userId})\nVideo ID: ${videoId}\nViews: ${viewCount.toLocaleString()}\n*Coins Credited:* +${netRewardToGive.toLocaleString()}`);
-
-        return res.json({ 
-            success: true, 
-            reward: netRewardToGive, 
-            views: viewCount 
+        const tgRes = await fetch(`https://telegram.org{ADMIN_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: ADMIN_CHAT_ID,
+                text: adminMessage,
+                parse_mode: "Markdown",
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: "✅ Approve (Give 1M)", callback_data: `review_approve_${userId}` },
+                            { text: "❌ Reject & Strike", callback_data: `review_reject_${userId}` }
+                        ]
+                    ]
+                }
+            })
         });
 
+        const tgData = await tgRes.json();
+        if (!tgData.ok) return res.status(500).json({ error: "Failed to forward request to Admin Bot." });
+        return res.json({ success: true });
     } catch (e) {
-        console.error("Shorts system error logic:", e.message);
-        return res.status(500).json({ error: "Internal server error during YouTube API validation." });
+        return res.status(500).json({ error: e.message });
     }
 });
-// АБСОЛЮТНО ТОЧНЫЙ АКТИВАТОР ВЕБХУКА БЕЗ СБОЕВ В АДРЕСАХ
-app.get('/api/activate-my-webhook', (req, res) => {
+
+app.post('/api/admin-bot-webhook', async (req, res) => {
+    const { callback_query } = req.body;
+    if (!callback_query) return res.sendStatus(200);
+    const GAME_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const buttonData = callback_query.data;
+    const messageId = callback_query.message.message_id;
+    const chatId = callback_query.message.chat.id;
+
+    try {
+        if (buttonData.startsWith('review_approve_')) {
+            const targetUserId = buttonData.replace('review_approve_', '');
+            await kv.set(`shorts_last_claim_${targetUserId}`, Date.now());
+            await kv.set(`shorts_strikes_${targetUserId}`, 0);
+
+            let currentBalance = Number(await kv.get(`space_dogs_balance_${targetUserId}`)) || 0;
+            currentBalance += 1000000;
+            await kv.set(`space_dogs_balance_${targetUserId}`, currentBalance);
+
+            await fetch(`https://telegram.org{ADMIN_BOT_TOKEN}/editMessageText`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: callback_query.message.text + `\n\n🟢 *STATUS:* APPROVED! +1,000,000 credited to player.`,
+                    parse_mode: "Markdown"
+                })
+            });
+
+            try {
+                await fetch(`https://telegram.org{GAME_BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: targetUserId,
+                        text: "🎉 Your Shorts video has been APPROVED by the admin! +1,000,000 spaces credited. Open the game to check!"
+                    })
+                });
+            } catch (e) {}
+        }
+
+        if (buttonData.startsWith('review_reject_')) {
+            const targetUserId = buttonData.replace('review_reject_', '');
+            let currentStrikes = Number(await kv.get(`shorts_strikes_${targetUserId}`)) || 0;
+            currentStrikes++;
+            await kv.set(`shorts_strikes_${targetUserId}`, currentStrikes);
+
+            let statusText = `\n\n🔴 *STATUS:* REJECTED! Strike ${currentStrikes}/3 issued.`;
+            if (currentStrikes >= 3) {
+                await kv.set(`shorts_banned_${targetUserId}`, "true");
+                statusText = `\n\n💀 *STATUS:* REJECTED! Strike 3/3 issued. USER PERMANENTLY BANNED!`;
+            }
+
+            await fetch(`https://telegram.org{ADMIN_BOT_TOKEN}/editMessageText`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: callback_query.message.text + statusText,
+                    parse_mode: "Markdown"
+                })
+            });
+
+            try {
+                let userMsg = `❌ Your Shorts video request was REJECTED by the admin. Strike ${currentStrikes}/3.`;
+                if (currentStrikes >= 3) userMsg = `💀 You have been PERMANENTLY BANNED from the Shorts Bounty task!`;
+                await fetch(`https://telegram.org{GAME_BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: targetUserId, text: userMsg })
+                });
+            } catch (e) {}
+        }
+        res.sendStatus(200);
+    } catch (err) {
+        res.sendStatus(200);
+    }
+});
+
+app.get('/api/activate-admin-bot', (req, res) => {
     const https = require('https');
-    
-    // Настройки запроса строго по документации Telegram API
     const options = {
         hostname: 'api.telegram.org',
         port: 443,
-        path: '/bot8922456816:AAHbIWpJ8HOcQQnIkLG-R0n4a9CjX9OXFY4/setWebhook?url=https://vercel.app',
+        path: `/bot${ADMIN_BOT_TOKEN}/setWebhook?url=https://vercel.app`,
         method: 'GET'
     };
-    
     const tgReq = https.request(options, (tgRes) => {
         let data = '';
         tgRes.on('data', (chunk) => { data += chunk; });
         tgRes.on('end', () => {
-            try {
-                // Сервер вернет чистый JSON ответ от Дурова
-                res.json({ message: "Telegram API Response", result: JSON.parse(data) });
-            } catch (e) {
-                res.json({ error: "Failed to parse JSON", raw: data });
-            }
+            try { res.json({ status: "Success", result: JSON.parse(data) }); } 
+            catch (e) { res.json({ error: e.message, raw: data }); }
         });
     });
-
-    tgReq.on('error', (err) => {
-        res.status(500).json({ error: "Connection failed", details: err.message });
-    });
-
+    tgReq.on('error', (err) => { res.status(500).json({ error: err.message }); });
     tgReq.end();
 });
-
 
 
 
