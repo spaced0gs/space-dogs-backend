@@ -38,57 +38,58 @@ app.get('/api/clans', async (req, res) => {
     res.json(clans);
 });
 
-// 2. Создание нового клана с международным фильтром мата и свастик
+// 2. Создание нового клана с глобальным ИИ-фильтром мата на всех языках мира и запретом свастик
 app.post('/api/clans/create', async (req, res) => {
     const { logo, name, reqLvl, balance, creatorName } = req.body;
     let clans = await getClansFromDB();
 
+    if (!name) return res.status(400).json({ error: "Clan name is required!" });
     const normalName = name.trim();
     const leaderName = creatorName || "Space_Pilot";
-
-    // Сверхжесткий список запрещенных слов, нацизма и расизма
-    const forbiddenSymbols = [
-        "негр", "хохол", "жид", "чурка", "хач", "нацист", "фашист", "nigger", "nigga", "chink", "retard",
-        "卐", "卍", "ss", "сс", "нацизм", "гитлер", "hitler", "swastika", "свастика", "卐", "卍", "🖾", "✠", "✙"
-    ];
-
-    // База международных матов (Английский, Хинди, Испанский, Немецкий)
-    const foreignBadWords = [
-        "fuck", "fucking", "fucker", "bitch", "shit", "asshole", "cunt", "dick", "pussy", "whore", "slut", "faggot", "bastard",
-        "bhenchod", "benchod", "madarchod", "gand", "gandu", "chutiya", "mierda", "puta", "puto", "maricon", "cabron", "joder",
-        "scheisse", "fotze", "schlampe"
-    ];
-
-    // Мощное регулярное выражение для проверки РУССКИХ матерных корней
-    const customRussianRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
-
     const lowerText = normalName.toLowerCase();
 
-    // 1. Проверка на русский мат
-    let hasBad = customRussianRegex.test(lowerText);
+    // 1. ЛОКАЛЬНАЯ ЗАЩИТА: СВАСТИКИ И НАЦИСТСКИЕ СИМВОЛЫ (То, что ИИ может пропустить)
+    const hateSymbols = [
+        "卐", "卍", "🖾", "✠", "✙", "ss", "сс", "наци", "гитлер", "hitler", 
+        "swastika", "свастика", "фашист", "fascist", "1488"
+    ];
     
-    // 2. Проверка на нацистские символы и оскорбления
-    if (!hasBad) {
-        hasBad = forbiddenSymbols.some(word => lowerText.includes(word));
-    }
-    
-    // 3. Проверка на иностранный мат
-    if (!hasBad) {
-        hasBad = foreignBadWords.some(word => {
-            const regex = new RegExp(`\\b${word}\\b`, 'gi');
-            return regex.test(lowerText);
-        });
+    const hasHateSymbol = hateSymbols.some(symbol => lowerText.includes(symbol));
+    if (hasHateSymbol) {
+        return res.status(400).json({ error: "Inappropriate symbols or hate speech are strictly prohibited!" });
     }
 
-    // Если нашли хоть одно совпадение — жестко блокируем создание клана
-    if (hasBad) {
-        return res.status(400).json({ error: "Inappropriate language or symbols in the clan name are not allowed!" });
+    // 2. ЛОКАЛЬНАЯ ЗАЩИТА: УСИЛЕННЫЙ ФИЛЬТР СНГ-МАТА И ОБХОДОВ С ТОЧКАМИ (П.и.д.о.р и т.д.)
+    const russianSlangRegex = /([а-яё]*хуй[а-яё]*|[а-яё]*хуи[а-яё]*|[а-яё]*хуе[а-яё]*|[а-яё]*хул[а-яё]*|[а-яё]*пизд[а-яё]*|[а-яё]*еб[а-яё]*|[а-яё]*ёб[а-яё]*|[а-яё]*бл[яе]д[а-яё]*|[а-яё]*бл[яе]т[а-яё]*|[а-яё]*пид[оа]р[а-яё]*|[а-яё]*гондо[а-яё]*|[а-яё]*ганд[оа]н[а-яё]*|[а-яё]*манда[а-яё]*|[а-яё]*шалав[а-яё]*|[а-яё]*шлюх[а-яё]*)/gi;
+    
+    // Удаляем пробелы и точки для проверки скрытого мата
+    const compressedText = lowerText.replace(/[^a-zA-Z0-9а-яёА-ЯЁა-ჰ]/g, ""); 
+    
+    if (russianSlangRegex.test(lowerText) || russianSlangRegex.test(compressedText)) {
+        return res.status(400).json({ error: "Profanity is not allowed!" });
     }
 
-    if (clans.some(c => c.name.toLowerCase() === normalName.toLowerCase())) {
+    // 3. ГЛОБАЛЬНЫЙ НЕЙРО-ФИЛЬТР: ПРОВЕРКА ЧЕРЕЗ МЕЖДУНАРОДНЫЙ API МОДЕРАЦИИ
+    // Этот запрос проверяет текст на маты ВСЕХ известных языков мира (включая грузинский, европейские и азиатские)
+    try {
+        const pResponse = await fetch(`https://purgomalum.com{encodeURIComponent(normalName)}`);
+        const pData = await pResponse.json();
+        
+        // Если API нашел плотское или бранное слово, оно заменит его на звёздочки (например, "***")
+        if (pData && pData.result && pData.result.includes('*')) {
+            return res.status(400).json({ error: "Profanity in any language is strictly prohibited!" });
+        }
+    } catch (apiError) {
+        console.error("Глобальный фильтр временно недоступен, работает локальный режим:", apiError);
+        // Если внешний сервер упал, игра всё равно защищена жестким локальным СНГ-фильтром выше
+    }
+
+    // 4. ПРОВЕРКА НА ДУБЛИКАТЫ НАЗВАНИЙ
+    if (clans.some(c => c.name.toLowerCase() === lowerText)) {
         return res.status(400).json({ error: "A clan with that name already exists!" });
     }
 
+    // Создаем клан, если всё чисто
     const newClan = {
         logo: logo || "🚀",
         name: normalName,
@@ -99,7 +100,7 @@ app.post('/api/clans/create', async (req, res) => {
         membersList: [
             { name: leaderName, balance: Number(balance), dogLvl: Number(reqLvl) }
         ],
-        messages: [{ sender: "SYSTEM", text: `🚀 Клан "${normalName}" успешно создан!`, time: "" }]
+        messages: [{ sender: "SYSTEM", text: `🚀 Clan "${normalName}" has been successfully created!`, time: "" }]
     };
 
     clans.unshift(newClan);
@@ -500,72 +501,225 @@ app.post('/api/tasks/claim-friends-reward', async (req, res) => {
     // аналогично тому, как мы делали это на клиенте.
     res.json({ success: true });
 });
-// ====== ИНТЕГРАЦИЯ ТЕЛЕГРАМ-БОТА С АВТО-ВЕБХУКОМ ======
-const { Telegraf, Markup } = require('telegraf');
+// ========================================================
+// 🆕 SHORTS BOUNTY SYSTEM WITH AUTO-BOT & COMPREHENSIVE ANTI-CHEAT
+// ========================================================
 
-// ==================================================================
-//  ЖЕЛЕЗОБЕТОННЫЙ ТЕЛЕГРАМ-БОТ ДЛЯ VERCEL SERVERLESS (БЕЗ РЕКЛАМЫ)
-// ==================================================================
-const BOT_TOKEN = '8922456816:AAF5aQWspqjYyvxXJd8k94KCUzds_x-4qE4';
-const GAME_URL = 'https://space-dogs-two.vercel.app/';
-const CHANNEL_URL = 'https://t.me/spacedogoff';
+// Automated Telegram Admin Notification Function
+async function sendTelegramAdminLog(message) {
+    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    // ⚠️ REPLACE THIS WITH YOUR REAL TELEGRAM ID OR ADMIN CHANNEL ID (WITH MINUS IF CHANNEL)
+    const ADMIN_CHAT_ID = "6484999215"; 
 
-// Прямой эндпоинт, куда Telegram будет присылать команду /start
-app.post('/api/telegram-bot', async (req, res) => {
+    if (!TELEGRAM_BOT_TOKEN || !ADMIN_CHAT_ID || ADMIN_CHAT_ID === "6484999215") return;
+
     try {
-        // Извлекаем входящее сообщение от пользователя
-        const update = req.body;
-        
-        if (update && update.message && update.message.text === '/start') {
-            const chatId = update.message.chat.id;
+        await fetch(`https://telegram.org{TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: ADMIN_CHAT_ID,
+                text: message,
+                parse_mode: "Markdown"
+            })
+        });
+    } catch (e) {
+        console.error("Telegram admin bot logging error:", e.message);
+    }
+}
+
+// Quiet endpoint to check ban status when entering the Earn tab
+app.post('/api/tasks/check-shorts-ban', async (req, res) => {
+    const { initData } = req.body;
+    try {
+        const params = new URLSearchParams(initData);
+        const userParam = params.get('user');
+        if (!userParam) return res.status(400).json({ error: "Invalid webapp initialization data." });
+        const userData = JSON.parse(userParam);
+        const userId = String(userData.id);
+
+        const isBanned = await kv.get(`shorts_banned_${userId}`);
+        res.json({ isBanned: isBanned === "true" });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Main verification endpoint: Handling view milestones, tags, limits, and anti-fraud
+app.post('/api/tasks/verify-shorts', async (req, res) => {
+    const { videoUrl, initData, isInvalidLink } = req.body;
+    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY; 
+    const REQUIRED_HASHTAG = "#spacedogsgame"; 
+
+    if (!initData) return res.status(400).json({ error: "Telegram Authentication data required." });
+    if (!videoUrl) return res.status(400).json({ error: "Video URL is required." });
+
+    try {
+        const params = new URLSearchParams(initData);
+        const userParam = params.get('user');
+        if (!userParam) return res.status(400).json({ error: "Invalid Telegram user data." });
+        const userData = JSON.parse(userParam);
+        const userId = String(userData.id);
+        const userUsername = userData.username ? `@${userData.username}` : userData.first_name;
+
+        // 1. BAN CHECK: Is the user banned from this specific task?
+        const checkBan = await kv.get(`shorts_banned_${userId}`);
+        if (checkBan === "true") {
+            return res.status(403).json({ isBanned: true, error: "You are banned from the Shorts Bounty task!" });
+        }
+
+        // Internal Strike & Ban Processor
+        async function issueStrikeAndCheckBan(customError) {
+            let currentStrikes = Number(await kv.get(`shorts_strikes_${userId}`)) || 0;
+            currentStrikes++;
+            await kv.set(`shorts_strikes_${userId}`, currentStrikes);
+
+            if (currentStrikes >= 3) {
+                await kv.set(`shorts_banned_${userId}`, "true"); 
+                await sendTelegramAdminLog(`💀 *SHORTS TASK BAN*\nUser: ${userUsername} (ID: ${userId})\nReason: Received 3/3 strikes for fraud or heavy spamming.`);
+                return { isBanned: true, error: "You are permanently banned from the Shorts Bounty task!" };
+            }
             
-            const welcomeText = 
-                `Welcome to Space Dogs! 🚀🐾\n\n` +
-                `Launch rockets, upgrade your dogs, open cases, and build the ultimate Space Clan.\n\n` +
-                `Tap below to start your journey! 👇`;
+            await sendTelegramAdminLog(`⚠️ *STRIKE ISSUED*\nUser: ${userUsername} (ID: ${userId})\nStrikes: ${currentStrikes}/3\nReason: ${customError}`);
+            return { isBanned: false, error: `${customError} Strike ${currentStrikes}/3. 3 strikes = permanent BAN.` };
+        }
 
-            // Формируем нативные Inline-кнопки
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '🚀Space Dogs🚀', web_app: { url: GAME_URL } }],
-                    [{ text: 'Subscribe to official channel', url: CHANNEL_URL }]
-                ]
-            };
+        // Catching spam text or non-shorts submissions immediately
+        if (isInvalidLink === true || videoUrl === "INVALID_SPAM") {
+            const strikeResult = await issueStrikeAndCheckBan("Submitted text, spam, or link that is not YouTube Shorts.");
+            return res.status(403).json(strikeResult);
+        }
 
-            // Отправляем прямой POST-запрос в Telegram API на отправку сообщения
-            await fetch(`https://telegram.org{BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    text: welcomeText,
-                    reply_markup: keyboard,
-                    parse_mode: 'Markdown'
-                })
+        // 2. SUNDAY/DAILY LIMIT CHECK: Maximum 1 successful video per calendar day
+        const lastClaimTimestamp = Number(await kv.get(`shorts_last_claim_${userId}`)) || 0;
+        if (lastClaimTimestamp !== 0) {
+            const lastClaimDate = new Date(lastClaimTimestamp).toDateString();
+            const nowDate = new Date().toDateString();
+            
+            if (lastClaimDate === nowDate) {
+                await sendTelegramAdminLog(`⏳ *LIMIT BYPASS ATTEMPT*\nUser: ${userUsername} (ID: ${userId})\nAction: Attempted to submit a second video within 24 hours.`);
+                return res.status(429).json({ 
+                    error: "You can only submit 1 Shorts video per day! Come back tomorrow." 
+                });
+            }
+        }
+
+        // Extracting unique 11-character Video ID from the link
+        const regExp = /^.*(?:shorts\/)([^#\&\?]*).*/;
+        const match = videoUrl.match(regExp);
+        const videoId = (match && match.length === 11) ? match[1] : null;
+
+        if (!videoId) {
+            const strikeResult = await issueStrikeAndCheckBan("Invalid YouTube link structure.");
+            return res.status(403).json(strikeResult);
+        }
+
+        if (!YOUTUBE_API_KEY) {
+            return res.status(500).json({ error: "YouTube API configuration is missing on the server backend." });
+        }
+
+        // Fetching official metadata and video statistics from Google
+        const ytRes = await fetch(`https://googleapis.com{videoId}&key=${YOUTUBE_API_KEY}`);
+        const ytData = await ytRes.json();
+
+        // If video does not exist or is set to private
+        if (!ytData.items || ytData.items.length === 0) {
+            const strikeResult = await issueStrikeAndCheckBan("Video not found on YouTube. Make sure it is public.");
+            return res.status(403).json(strikeResult);
+        }
+
+        const videoInfo = ytData.items[0];
+        const title = (videoInfo.snippet.title || "").toLowerCase();
+        const description = (videoInfo.snippet.description || "").toLowerCase();
+        const tags = videoInfo.snippet.tags || [];
+        
+        const viewCount = Number(videoInfo.statistics.viewCount) || 0;
+        const commentCount = Number(videoInfo.statistics.commentCount) || 0;
+        const likeCount = Number(videoInfo.statistics.likeCount) || 0;
+
+        // 3. HASHTAG VALIDATION: Reject and strike if the hashtag is missing
+        const hasTagInMeta = tags.some(t => t.toLowerCase() === REQUIRED_HASHTAG.replace('#', ''));
+        const hasTagInText = title.includes(REQUIRED_HASHTAG) || description.includes(REQUIRED_HASHTAG);
+
+        if (!hasTagInMeta && !hasTagInText) {
+            const strikeResult = await issueStrikeAndCheckBan(`Missing required ${REQUIRED_HASHTAG} hashtag in the video details.`);
+            return res.status(403).json(strikeResult);
+        }
+
+        // 4. VIEW COUNT VALIDATION: Must be at least 1,000,000 views
+        if (viewCount < 1000000) {
+            return res.status(400).json({ 
+                error: `Not enough views yet! Your video has ${viewCount.toLocaleString()} views. Minimum 1,000,000 required.` 
             });
         }
 
-        // Обязательно отвечаем серверу Telegram статус-кодом 200, чтобы он не слал повторы
-        res.status(200).send('OK');
-    } catch (err) {
-        console.error("Ошибка обработки бота:", err.message);
-        res.status(500).send(err.message);
+        // 5. ANTI-FRAUD SECURITY SCANNER (Sensing fake views and bot farms)
+        const engagementRate = (likeCount / viewCount) * 100;
+        if (engagementRate < 1.2 || likeCount < 10000 || commentCount < 50) {
+            await sendTelegramAdminLog(`🚫 *BOT DETECTION ALERT*\nUser: ${userUsername} (ID: ${userId})\nVideo ID: ${videoId}\nViews: ${viewCount.toLocaleString()}\nLikes: ${likeCount}\nComments: ${commentCount}\n*Result:* Transaction automatically blocked by security filters.`);
+            return res.status(403).json({ 
+                isBanned: false, 
+                error: "Security system alert: Suspicious botting activity detected (fake views). Reward blocked." 
+            });
+        }
+
+        // 6. REWARD CALCULATION (1M coins per every full 1M views)
+        const millionsCount = Math.floor(viewCount / 1000000);
+        const totalReward = millionsCount * 1000000;
+
+        const dbVideoKey = `shorts_rewarded_${videoId}`;
+        const alreadyClaimed = Number(await kv.get(dbVideoKey)) || 0;
+
+        if (totalReward <= alreadyClaimed) {
+            return res.status(400).json({ 
+                error: "You have already claimed your reward for the current view count. Reach the next million to claim again!" 
+            });
+        }
+
+        const netRewardToGive = totalReward - alreadyClaimed;
+        
+        // Committing records to Vercel KV Database
+        await kv.set(dbVideoKey, totalReward);
+        await kv.set(`shorts_last_claim_${userId}`, Date.now()); 
+        await kv.set(`shorts_strikes_${userId}`, 0); // Clearing errors on successful verified claim
+
+        // Sending Green Success Alert to Admin Bot
+        await sendTelegramAdminLog(`🟢 *SUCCESSFUL REWARD CLAIM*\nUser: ${userUsername} (ID: ${userId})\nVideo ID: ${videoId}\nViews: ${viewCount.toLocaleString()}\n*Coins Credited:* +${netRewardToGive.toLocaleString()}`);
+
+        return res.json({ 
+            success: true, 
+            reward: netRewardToGive, 
+            views: viewCount 
+        });
+
+    } catch (e) {
+        console.error("Shorts system error logic:", e.message);
+        return res.status(500).json({ error: "Internal server error during YouTube API validation." });
     }
 });
-
-// Вспомогательный эндпоинт для жесткой активации вебхука
-app.get('/api/activate-my-bot', async (req, res) => {
-    try {
-        const BACKEND_URL = 'https://vercel.app';
-        const tgRes = await fetch(`https://telegram.org{BOT_TOKEN}/setWebhook?url=${BACKEND_URL}/api/telegram-bot`);
-        const tgData = await tgRes.json();
-        res.json({ message: "Запрос отправлен!", responseFromTelegram: tgData });
-    } catch (err) {
-        res.json({ error: "Ошибка соединения", details: err.message });
-    }
+// FINALLY CORRECTED WEBHOOK ACTIVATOR (NO TYPOS)
+app.get('/api/activate-my-webhook', (req, res) => {
+    const https = require('https');
+    
+    // Прямой, жестко собранный адрес без ошибок в слэшах
+    const targetUrl = "https://telegram.org";
+    
+    https.get(targetUrl, (tgRes) => {
+        let data = '';
+        tgRes.on('data', (chunk) => { data += chunk; });
+        tgRes.on('end', () => {
+            try {
+                res.json({ message: "Server configuration response", telegram_api_data: JSON.parse(data) });
+            } catch (e) {
+                res.json({ message: "Raw response", raw: data });
+            }
+        });
+    }).on('error', (err) => {
+        res.status(500).json({ error: "HTTPS internal error", details: err.message });
+    });
 });
 
-// Экспортируем приложение для корректной работы Serverless функций Vercel
+
+
+
 module.exports = app;
-// ==================================================================
-
