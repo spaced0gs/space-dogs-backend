@@ -697,26 +697,36 @@ app.post('/api/tasks/verify-shorts', async (req, res) => {
         return res.status(500).json({ error: "Internal server error during YouTube API validation." });
     }
 });
-// FINALLY CORRECTED WEBHOOK ACTIVATOR (NO TYPOS)
+// АБСОЛЮТНО ТОЧНЫЙ АКТИВАТОР ВЕБХУКА БЕЗ СБОЕВ В АДРЕСАХ
 app.get('/api/activate-my-webhook', (req, res) => {
     const https = require('https');
     
-    // Прямой, жестко собранный адрес без ошибок в слэшах
-    const targetUrl = "https://telegram.org";
+    // Настройки запроса строго по документации Telegram API
+    const options = {
+        hostname: 'api.telegram.org',
+        port: 443,
+        path: '/bot8922456816:AAHbIWpJ8HOcQQnIkLG-R0n4a9CjX9OXFY4/setWebhook?url=https://vercel.app',
+        method: 'GET'
+    };
     
-    https.get(targetUrl, (tgRes) => {
+    const tgReq = https.request(options, (tgRes) => {
         let data = '';
         tgRes.on('data', (chunk) => { data += chunk; });
         tgRes.on('end', () => {
             try {
-                res.json({ message: "Server configuration response", telegram_api_data: JSON.parse(data) });
+                // Сервер вернет чистый JSON ответ от Дурова
+                res.json({ message: "Telegram API Response", result: JSON.parse(data) });
             } catch (e) {
-                res.json({ message: "Raw response", raw: data });
+                res.json({ error: "Failed to parse JSON", raw: data });
             }
         });
-    }).on('error', (err) => {
-        res.status(500).json({ error: "HTTPS internal error", details: err.message });
     });
+
+    tgReq.on('error', (err) => {
+        res.status(500).json({ error: "Connection failed", details: err.message });
+    });
+
+    tgReq.end();
 });
 
 
